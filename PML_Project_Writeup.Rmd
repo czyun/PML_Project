@@ -1,0 +1,113 @@
+---
+title: "Practical Machine Learning Project"
+output: html_document
+---
+
+```{r,echo=FALSE}
+setwd("C:/Practical Machine Learning/Project")
+```
+
+##Data Partitioning
+
+Library 'caret' is loaded. The provided data sets are imported from the working directory. The training data set is partitioned into 70% for training and the remaining 30% for testing.
+
+```{r}
+library(caret)
+set.seed(975)
+data = read.csv("pml-training.csv", header = TRUE, sep = ",")
+prediction_data = read.csv("pml-testing.csv", header = TRUE, sep = ",")
+inTrain = createDataPartition(data$classe, p=.7)[[1]]
+training = data[inTrain,]
+testing = data[-inTrain,]
+```
+
+##Irrelevant Data
+
+The first 7 columns are for recording purpose which are irrelevant to the prediction and therefore removed from the data sets.
+
+```{r}
+training_ss = training[,-(1:7)]
+testing_ss = testing[,-(1:7)]
+prediction_ss = prediction_data[,-(1:7)]
+```
+
+##Zero Covariates
+
+The training data is examined for zero covariates.
+
+```{r}
+nearZeroVar(training_ss,saveMetrics=T)
+```
+
+As there are no zero covariates, no variable is removed from the training data set.
+
+##Missing Data
+
+The variables that have more than 90% empty string or 'NA' values are removed from the training data set, as the available data points of these variables are insufficient to be used for imputting. A function "data_availability" is defined to compute the proportion of available data points for each variable.
+
+```{r}
+data_availability = function(x) {
+  countNA = sum(is.na(x)|(x=="")) 
+  return((length(x)-countNA)/length(x))
+}
+training_ss2 = subset(training_ss,select=apply(training_ss,2,data_availability)>.9)
+testing_ss2 = subset(testing_ss,select=apply(testing_ss,2,data_availability)>.9)
+prediction_ss2 = subset(prediction_ss,select=apply(prediction_ss,2,data_availability)>.9)
+```
+
+##Variables Correlation
+
+The correlations among the remaining 52 variables are examined, to explore the possibility of data compression.
+
+```{r}
+M = abs(cor(training_ss2[,-53]))
+diag(M) = 0
+which(M > 0.8,arr.ind=T)
+```
+
+High correlation (correlation > 0.8) is observed among several pairs of variables, which shows that the variables can be reduced. 
+
+##Principal Component Analysis
+
+Principal Component Analysis is applied to determine the components that explain 95% variance of the variables.
+
+```{r}
+preProc = preProcess(training_ss2[,-53], method = "pca", thresh = 0.99)
+trainPC = predict(preProc,training_ss2[,-53])
+testPC = predict(preProc,testing_ss2[,-53])
+predictionPC = predict(preProc,prediction_ss2[,-53])
+```
+
+##Random Forest Algorithm with Cross-Validation
+
+Random Forest algorithm is used to train the principal components obtained above, because it has high accuracy and runs efficiently on large data sets. 3-fold cross-validation is used to estimate the overall model accuracy, averaged over the iterations.
+
+```{r}
+trCtrl = trainControl(method = "cv", number = 3)
+modelFit = train(training_ss2$classe~.,method="rf",data=trainPC,trControl=trCtrl,importance=T,ntree=100)
+modelFit$finalModel
+```
+
+##Out-of-Sample Accuracy
+
+The remaining 30% of the data is used to test the out-of-sample model accuracy, which gives a high accuracy of 0.98.
+
+```{r}
+confusionMatrix(testing_ss2$classe,predict(modelFit,testPC))
+```
+
+##Variable Importance
+
+The importance of the principal components in contributing to the model accuracy are ranked in the following plot. To improve run speed when the number of variables are very large, random forest can be run only with the most important variables obtained from a first run. This is not necessary for this data set as the number of variables are still within manageable run speed.
+
+```{r}
+varImpPlot(modelFit$finalModel, sort = TRUE, type = 1, pch = 19, col = 1, cex = 1, main = "Importance of Principal Components")
+```
+
+##Prediction for 20 Test Cases
+
+With sufficiently high accuracy, the model is used to predict the 20 test cases.
+
+```{r}
+predict(modelFit,predictionPC)
+```
